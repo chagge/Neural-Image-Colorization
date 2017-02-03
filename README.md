@@ -1,10 +1,10 @@
-# *Neural-Image-Colorization* with adversarial networks
+# *Neural-Image-Colorization* using adversarial networks
+
+<img src="" width="640px" align="right">
 
 This is a Tensorflow implementation of *[Image-to-Image Translation with Conditional Adversarial Networks]()* that aims to infer a mapping from X to Y, where X is a single channel "black and white" image and Y is 3-channel "colorized" version of that image.
 
 We make use of [Generative Adversarial Networks]() conditioned on the input to teach a generative neural network how to produce our desired results.
-
-<img src="" width="100%">
 
 The purpose of this repository is to port the model over to TensorFlow.
 
@@ -41,11 +41,11 @@ The purpose of this repository is to port the model over to TensorFlow.
 ## Usage
 
 ```sh
-python colorize.py --input path/to/input/image --output path/to/output/image
+python train.py
 ```
 
 ```sh
-python colorize.py --train
+python test.py 'path/to/input/image'
 ```
 
 ## Files

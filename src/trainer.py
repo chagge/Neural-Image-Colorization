@@ -16,6 +16,7 @@ class Trainer:
         self.disc = disc
         self.gen = gen
         self.paths = {
+            'lib_dir': self.current_path + '/../lib/',
             'out_dir': self.current_path + '/../output/',
             'trained_generators_dir': self.current_path + '/../lib/generators/',
             'training_dir': train_dir,
@@ -47,12 +48,16 @@ class Trainer:
             # Generator training ops
             gen_loss = -tf.reduce_mean(tf.log(prob_sample))
             gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="generator")
-            gen_update = tf.train.AdamOptimizer(learning_rate).minimize(gen_loss, var_list=gen_vars)
+            gen_opt = tf.train.AdamOptimizer(learning_rate)
+            gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
+            gen_update = gen_opt.apply_gradients(gen_grads)
 
             # Discriminator training ops
             disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1. - prob_sample))
             disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="discriminator")
-            disc_update = tf.train.AdamOptimizer(learning_rate).minimize(disc_loss, var_list=disc_vars)
+            disc_opt = tf.train.AdamOptimizer(learning_rate)
+            disc_grads = disc_opt.compute_gradients(disc_loss, disc_vars)
+            disc_update = disc_opt.apply_gradients(disc_grads)
 
             # Begin optimization process
             example = self.next_example()
@@ -66,14 +71,14 @@ class Trainer:
             for i in range(epochs):
                 bw = example_bw.eval()
                 color = example_color.eval()
-                _, d_loss = sess.run([disc_update, disc_loss], feed_dict={gen_placeholder: bw, disc_placeholder: color})
-                _, g_loss = sess.run([gen_update, gen_loss], feed_dict={gen_placeholder: bw})
+                _, d_loss, d_pred = sess.run([disc_update, disc_loss, prob_target], feed_dict={gen_placeholder: bw, disc_placeholder: color})
+                _, g_loss, g_pred = sess.run([gen_update, gen_loss, prob_sample], feed_dict={gen_placeholder: bw})
 
                 # Print current epoch number and errors if warranted
                 if self.print_training_status and i % self.print_n == 0:
                     total_loss = g_loss + d_loss
                     fields = (i, total_loss, g_loss, d_loss)
-                    print("Epoch %06d | Total Loss %.05f | Generator Loss %.05f | Discriminator Loss %.05f" % fields)
+                    print("Epoch %06d | Total Loss %.010f | Generator Loss %.010f | Discriminator Loss %.010f" % fields)
                     self.__render_img(sample.eval(feed_dict={gen_placeholder: bw}), path_out=OUT_PATH)
 
             # Alert that training has been completed and print the run time
@@ -81,6 +86,8 @@ class Trainer:
             print("Training complete. The session took %.2f seconds to complete." % elapsed)
             coord.request_stop()
             coord.join(threads)
+
+            self.__save_model(gen_vars)
 
     # Returns an image in both its grayscale and rgb formats
     def next_example(self):
@@ -161,6 +168,14 @@ class Trainer:
 
         if path_out:
             toimage(shaped_img).save(path_out)
+
+    def __save_model(self, variables):
+        print("Proceeding to save weights..")
+        lib_dir = self.paths['lib_dir']
+        if not os.path.isdir(lib_dir):
+            os.makedirs(lib_dir)
+        saver = tf.train.Saver(variables)
+        saver.save(self.session, lib_dir + 'generator')
 
     # Returns a pair of decoded image with a 1 and 3 channels respectively
     def __split_img(self, file, height, width):

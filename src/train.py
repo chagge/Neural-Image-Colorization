@@ -6,8 +6,8 @@ import tensorflow as tf
 import trainer
 
 # Model hyperparamaters
-EPOCHS = 120000
-LEARNING_RATE = .01
+EPOCHS = 1200000
+LEARNING_RATE = .005
 
 # Training related paramaters
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
