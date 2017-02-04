@@ -30,8 +30,8 @@ class Generator(net.Net):
             self.conv_d6 = self.__resid_layer(self.conv_d5, self.conv_e3, 256, name='conv_d6')
             self.conv_d7 = self.__resid_layer(self.conv_d6, self.conv_e2, 128, name='conv_d7')
             self.conv_d8 = self.__resid_layer(self.conv_d7, self.conv_e1, 64, name='conv_d8')
-            self.output = self.conv_layer(self.conv_d8, 2, stride=[1, 1, 1, 1], act=tf.nn.sigmoid, name='output')
-            print(1)
+            self.output_ = self.conv_layer(self.conv_d8, 2, stride=[1, 1, 1, 1], act=tf.nn.sigmoid, name='output')
+            self.output = tf.concat(3, [self.output_, inputs])
 
     # Restore a trained generator
     @staticmethod

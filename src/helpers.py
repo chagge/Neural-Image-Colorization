@@ -9,7 +9,7 @@ def rgb2yuv(rgb):
     ])
 
     # Transform the pixel intensity values
-    rgb_shape = rgb.get_shape().as_list()
+    rgb_shape = tf.shape(rgb)
     rgb = tf.reshape(rgb, [3, rgb_shape[1] * rgb_shape[2]])
     yuv = tf.matmul(c, rgb)
     yuv = tf.reshape(yuv, [1, rgb_shape[1], rgb_shape[2], 3])
@@ -29,7 +29,7 @@ def yuv2rgb(yuv):
     ])
 
     # Transform the pixel intensity values
-    yuv_shape = yuv.get_shape().as_list()
+    yuv_shape = tf.shape(yuv)
     yuv = tf.reshape(yuv, [3, yuv_shape[1] * yuv_shape[2]])
     rgb = tf.matmul(c, yuv)
     rgb = tf.reshape(rgb, [1, yuv_shape[1], yuv_shape[2], 3])
@@ -38,11 +38,7 @@ def yuv2rgb(yuv):
 
 
 def y_uv(y, uv):
-    shape = y.get_shape().as_list()
-    y_ = tf.reshape(y, [1, shape[1], shape[2]])
-    uv_ = tf.reshape(uv, [2, shape[1], shape[2]])
-    yuv_ = tf.concat(0, [y_, uv_])
-    yuv = tf.reshape(yuv_, [1, shape[1], shape[2], 3])
+    yuv = tf.concat(3, [y, uv])
     return yuv
 
 
