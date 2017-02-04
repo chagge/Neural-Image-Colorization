@@ -1,3 +1,4 @@
+import helpers
 import numpy as np
 import os
 from scipy.misc import toimage
@@ -8,6 +9,7 @@ import zipfile
 
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 OUT_PATH = DIR_PATH + '/../output/out_%.0f.jpg' % time.time()
+EPSILON = 1e-10
 
 
 class Trainer:
@@ -28,76 +30,92 @@ class Trainer:
         self.train_height = training_dims['height']
         self.train_width = training_dims['width']
 
-    def train(self, epochs, learning_rate):
+    def train(self, epochs, learning_rate, batch_size):
         self.__check_for_examples()
 
-        with tf.Session() as sess:
-            bw_shape = [1, self.train_height, self.train_width, 1]
-            color_shape = bw_shape[:3] + [3]
-            gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape)
-            disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape)
+        bw_shape = [None, self.train_height, self.train_width, 1]
+        color_shape = bw_shape[:3] + [3]
+        gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape)
+        disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape)
 
-            # Build the generator
-            self.gen.build(gen_placeholder)
+        # Build the generator
+        self.gen.build(gen_placeholder)
 
-            # Generate a sample and attain the probability that the sample and the target are from the real distribution
-            sample = self.gen.output
-            prob_sample = self.disc.predict(sample)
-            prob_target = self.disc.predict(disc_placeholder)
+        # Generate a sample and attain the probability that the sample and the target are from the real distribution
+        sample = helpers.y_uv(gen_placeholder, self.gen.output)
+        prob_sample, prob_sample_logit = self.disc.predict(sample)
+        prob_sample_logit += EPSILON
+        prob_target, prob_target_logit = self.disc.predict(disc_placeholder)
+        prob_target_logit += EPSILON
 
-            # Generator training ops
-            gen_loss = -tf.reduce_mean(tf.log(prob_sample))
-            gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="generator")
-            gen_opt = tf.train.AdamOptimizer(learning_rate)
-            gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
-            gen_update = gen_opt.apply_gradients(gen_grads)
+        # Generator training ops
+        gen_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(prob_sample_logit, tf.ones_like(prob_sample_logit)))
+        gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="generator")
+        gen_opt = tf.train.AdamOptimizer(learning_rate)
+        gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
+        gen_update = gen_opt.apply_gradients(gen_grads)
 
-            # Discriminator training ops
-            disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1. - prob_sample))
-            disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="discriminator")
-            disc_opt = tf.train.AdamOptimizer(learning_rate)
-            disc_grads = disc_opt.compute_gradients(disc_loss, disc_vars)
-            disc_update = disc_opt.apply_gradients(disc_grads)
+        # Discriminator training ops
+        disc_loss_target = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(prob_target_logit, tf.ones_like(prob_target_logit)))
+        disc_loss_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(prob_sample_logit, tf.zeros_like(prob_sample_logit)))
+        disc_loss = disc_loss_target + disc_loss_sample
+        disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="discriminator")
+        disc_opt = tf.train.AdamOptimizer(learning_rate)
+        disc_grads = disc_opt.compute_gradients(disc_loss, disc_vars)
+        disc_update = disc_opt.apply_gradients(disc_grads)
 
-            # Begin optimization process
-            example = self.next_example()
-            example_bw, example_color = self.__split_img(example, self.train_height, self.train_width)
-            print("Initializing session and begin threading..")
-            tf.initialize_all_variables().run()
-            coord = tf.train.Coordinator()
-            threads = tf.train.start_queue_runners(coord=coord)
-            start_time = time.time()
+        # Begin optimization process
+        example = self.next_example(height=self.train_height, width=self.train_width)
+        example_color, example_bw = helpers.rgb2yuv(example)
 
-            for i in range(epochs):
-                bw = example_bw.eval()
-                color = example_color.eval()
-                _, d_loss, d_pred = sess.run([disc_update, disc_loss, prob_target], feed_dict={gen_placeholder: bw, disc_placeholder: color})
-                _, g_loss, g_pred = sess.run([gen_update, gen_loss, prob_sample], feed_dict={gen_placeholder: bw})
+        #example_bw, example_color = self.__split_img(example, self.train_height, self.train_width)
+        print("Initializing session and begin threading..")
+        self.session.run(tf.initialize_all_variables())
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(coord=coord)
+        start_time = time.time()
 
-                # Print current epoch number and errors if warranted
-                if self.print_training_status and i % self.print_n == 0:
-                    total_loss = g_loss + d_loss
-                    fields = (i, total_loss, g_loss, d_loss)
-                    print("Epoch %06d | Total Loss %.010f | Generator Loss %.010f | Discriminator Loss %.010f" % fields)
-                    self.__render_img(sample.eval(feed_dict={gen_placeholder: bw}), path_out=OUT_PATH)
+        for i in range(epochs):
+            bw = example_bw.eval()
+            color = example_color.eval()
+            s = sample.eval(feed_dict={gen_placeholder: bw})
+            _, d_loss, d_pred = self.session.run([disc_update, disc_loss, prob_target], feed_dict={gen_placeholder: bw, disc_placeholder: color})
+            _, g_loss, g_pred, g, = self.session.run([gen_update, gen_loss, prob_sample, gen_grads], feed_dict={gen_placeholder: bw})
 
-            # Alert that training has been completed and print the run time
-            elapsed = time.time() - start_time
-            print("Training complete. The session took %.2f seconds to complete." % elapsed)
-            coord.request_stop()
-            coord.join(threads)
+            # Print current epoch number and errors if warranted
+            if self.print_training_status and i % self.print_n == 0:
+                total_loss = g_loss + d_loss
+                log1 = "Epoch %06d | Total Loss %.010f | " % (i, total_loss)
+                log2 = "Generator Loss %.010f | " % g_loss
+                log3 = "Discriminator Loss %.010f" % d_loss
+                print(log1 + log2 + log3)
 
-            self.__save_model(gen_vars)
+                yuv = sample.eval(feed_dict={gen_placeholder: bw})
+                rgb = helpers.yuv2rgb(tf.convert_to_tensor(yuv))
+                self.__render_img(self.session.run(rgb), path_out=OUT_PATH)
+
+        # Alert that training has been completed and print the run time
+        elapsed = time.time() - start_time
+        print("Training complete. The session took %.2f seconds to complete." % elapsed)
+        coord.request_stop()
+        coord.join(threads)
+
+        self.__save_model(gen_vars)
 
     # Returns an image in both its grayscale and rgb formats
-    def next_example(self):
+    def next_example(self, height, width):
         # Ops for getting training images, from retrieving the filenames to reading the data
         regex = self.paths['training_dir'] + '/*.jpg'
         filenames = tf.train.match_filenames_once(regex)
         filename_queue = tf.train.string_input_producer(filenames)
         reader = tf.WholeFileReader()
         _, file = reader.read(filename_queue)
-        return file
+
+        img = tf.image.decode_jpeg(file, channels=3)
+        img = tf.image.resize_images(img, [height, width])
+        img = tf.div(img, 255.)
+        img = tf.expand_dims(img, dim=0)
+        return img
 
     # Asks on stdout to download MSCOCO data. Downloads if response is 'y'
     def __ask_to_download(self):
@@ -192,7 +210,3 @@ class Trainer:
             example_color = get_image(file, 3)
             return example_bw, example_color
 
-    def __exit(self, rc=0, message="Exiting the program.."):
-        print(message)
-        self.session.close()
-        exit(rc)

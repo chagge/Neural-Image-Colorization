@@ -9,9 +9,11 @@ class Discriminator(net.Net):
 
     def predict(self, inputs):
         with tf.variable_scope('discriminator') as scope:
-            conv_e1 = self.conv_layer(inputs, 64, shape=[1, 1, 3, 3], act=self.leaky_relu, norm=False, name='conv_e1')
-            conv_e2 = self.conv_layer(conv_e1, 128, shape=[1, 1, 3, 3], act=self.leaky_relu, name='conv_e2')
+            stride = [1, 1, 1, 1]
+            conv_e1 = self.conv_layer(inputs, 64, shape=[1, 1, 3, 3], act=self.leaky_relu, stride=stride, norm=False, name='conv_e1')
+            conv_e2 = self.conv_layer(conv_e1, 128, shape=[1, 1, 3, 1], act=self.leaky_relu, stride=stride, name='conv_e2')
+            conv_e3 = self.conv_layer(conv_e2, 128, shape=[1, 1, 1, 1], act=None, stride=stride, name='conv_e2')
 
-            output = tf.nn.sigmoid(conv_e2)
+            prediction = tf.nn.sigmoid(conv_e3)
             scope.reuse_variables()
-            return output
+            return prediction, conv_e3

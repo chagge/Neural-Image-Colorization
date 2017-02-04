@@ -8,6 +8,7 @@ import trainer
 # Model hyperparamaters
 EPOCHS = 1200000
 LEARNING_RATE = .005
+BATCH_SIZE = 128
 
 # Training related paramaters
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -29,4 +30,4 @@ with tf.Session() as sess:
     gen = generator.Generator()
     disc = discriminator.Discriminator()
     t = trainer.Trainer(sess, gen, disc, TRAIN_DIR, TRAINING_DIMS, PRINT_TRAINING_STATUS, PRINT_EVERY_N)
-    t.train(EPOCHS, LEARNING_RATE)
+    t.train(EPOCHS, LEARNING_RATE, BATCH_SIZE)
