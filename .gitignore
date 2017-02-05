@@ -1,5 +1,5 @@
 .idea
 __pycache__/
 .jpg
-lib/train2014
+lib/
 output/

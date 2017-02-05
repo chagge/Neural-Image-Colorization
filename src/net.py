@@ -39,6 +39,14 @@ class Net(object):
 
             return x
 
+    @staticmethod
+    def add_noise(inputs, multiplier=1.):
+        if multiplier <= 0:
+            return inputs
+        noise = tf.random_normal(tf.shape(inputs), mean=0., stddev=.2) * multiplier
+        inputs = tf.add(inputs, noise)
+        return inputs
+
     # Instance normalize inputs to reduce covariate shift and reduce dependency on input contrast to improve results
     @staticmethod
     def instance_normalize(inputs):
