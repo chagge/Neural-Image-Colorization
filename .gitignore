@@ -1,5 +1,5 @@
 .idea
 __pycache__/
-.jpg
+*.jpg
 lib/
 output/

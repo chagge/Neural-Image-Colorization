@@ -3,11 +3,13 @@ import os
 import tensorflow as tf
 import time
 
+import skimage
+import skimage.io
+import skimage.transform
+import numpy as np
+
 EPSILON = 1e-10
-LEARNING_DECAY = 40e-10
 MOMENTUM_B1 = .5
-MOMENTUM_GROWTH = .0008
-MOMENTUM_LIMIT = .8
 
 
 class Trainer:
@@ -23,7 +25,7 @@ class Trainer:
     def train(self, epochs, learning_rate, batch_size):
         Helpers.check_for_examples()
 
-        bw_shape = [batch_size, self.train_height, self.train_width, 1]
+        bw_shape = [None, self.train_height, self.train_width, 1]
         color_shape = bw_shape[:3] + [3]
         gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape)
         disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape)
@@ -33,10 +35,8 @@ class Trainer:
 
         # Generate a sample and attain the probability that the sample and the target are from the real distribution
         sample = self.gen.output
-        prob_sample, prob_sample_logit = self.disc.predict(sample)
-        prob_sample_logit += EPSILON
-        prob_target, prob_target_logit = self.disc.predict(disc_placeholder)
-        prob_target_logit += EPSILON
+        prob_sample = self.disc.predict(sample) + EPSILON
+        prob_target = self.disc.predict(disc_placeholder) + EPSILON
 
         # Losses
         gen_loss = -tf.reduce_mean(tf.log(prob_sample))
@@ -46,12 +46,8 @@ class Trainer:
         gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="generator")
         disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="discriminator")
 
-        learning_var = tf.Variable(tf.constant(learning_rate), trainable=False, name='learning_rate')
-        momentum_var = tf.Variable(tf.constant(.5), trainable=False, name='momentum')
-        #tf.variables_initializer([learning_var, momentum_var]).run()
-        self.session.run(tf.initialize_all_variables())
-        disc_opt = tf.train.AdamOptimizer(learning_var, beta1=momentum_var)
-        gen_opt = tf.train.AdamOptimizer(learning_var, beta1=momentum_var)
+        disc_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
+        gen_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
 
         gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
         gen_update = gen_opt.apply_gradients(gen_grads)
@@ -61,15 +57,19 @@ class Trainer:
 
         # Training data retriever ops
         example = self.next_example(height=self.train_height, width=self.train_width)
-        min_after_dequeue = 1000
-        num_threads = 2
-        capacity = 30000
-        batch = tf.train.shuffle_batch(
-            [example],
-            batch_size=batch_size,
-            num_threads=num_threads,
-            capacity=capacity,
-            min_after_dequeue=min_after_dequeue)
+        batch = tf.train.batch([example], batch_size=batch_size)
+
+        # delete this when done
+        CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
+        filenames_ = tf.train.match_filenames_once(CURRENT_PATH + '/../nyc.jpg')
+        filename_queue_ = tf.train.string_input_producer(filenames_)
+        r = tf.WholeFileReader()
+        fn_, f_ = r.read(filename_queue_)
+        rgb_ = tf.image.decode_jpeg(f_, channels=1)
+        img_ = tf.image.resize_images(rgb_, [self.train_height, self.train_width])
+        img_ = tf.div(img_, 255.)
+        #f_ = tf.image.rgb_to_hsv(img_)
+        f = tf.expand_dims(img_, dim=0)
 
         print("Initializing session and begin threading..")
         self.session.run(tf.initialize_all_variables())
@@ -78,11 +78,17 @@ class Trainer:
         start_time = time.time()
 
         for i in range(epochs):
-            batch_bw = tf.image.rgb_to_grayscale(batch)
-            batch_color = tf.image.rgb_to_hsv(batch)
+            #example_bw_ = tf.image.rgb_to_grayscale(example)
+            #example_bw = tf.expand_dims(example_bw_, dim=0)
+            example_color = tf.image.rgb_to_hsv(batch)
+            #example_color = tf.expand_dims(example_color_, dim=0)
+            example_bw = tf.slice(
+                example_color,
+                [0, 0, 0, 2],
+                [batch_size, self.train_height, self.train_width, 1])
 
-            bw = batch_bw.eval()
-            color = batch_color.eval()
+            bw = example_bw.eval()
+            color = example_color.eval()
             #s = sample.eval(feed_dict={gen_placeholder: bw})
 
             _, d_loss, d_pred = self.session.run(
@@ -92,7 +98,7 @@ class Trainer:
             _, g_loss, g_pred, g = self.session.run(
                 [gen_update, gen_loss, prob_sample, gen_grads],
                 feed_dict={gen_placeholder: bw})
-            #print(1)
+            print(1)
             # Print current epoch number and errors if warranted
             if self.print_training_status and i % self.print_n == 0:
                 total_loss = g_loss + d_loss
@@ -101,17 +107,13 @@ class Trainer:
                 log3 = "Discriminator Loss %.010f" % d_loss
                 print(log1 + log2 + log3)
 
-                learning_var.assign(learning_var - LEARNING_DECAY)
-                momentum_var.assign(
-                    tf.cond(
-                        tf.less_equal(momentum_var, MOMENTUM_LIMIT),
-                        lambda: momentum_var + MOMENTUM_GROWTH,
-                        lambda: tf.identity(momentum_var)
-                    ))
-
-                single_sample = tf.slice(sample, [0, 0, 0, 0], [1, 256, 256, 3])
-                rgb = self.session.run(tf.image.hsv_to_rgb(single_sample), feed_dict={gen_placeholder: bw})
+                # test out
+                self.gen.is_training = False
+                rgb = self.session.run(
+                    tf.image.hsv_to_rgb(sample),
+                    feed_dict={gen_placeholder: f.eval()})
                 Helpers.render_img(rgb)
+                self.gen.is_training = True
 
         # Alert that training has been completed and print the run time
         elapsed = time.time() - start_time
@@ -149,3 +151,24 @@ class Trainer:
         saver = tf.train.Saver(variables)
         saver.save(self.session, lib_dir + '/generator')
 
+    # Returns a resized numpy array of an image specified by its path
+    def load_img_to(self, path, height=None, width=None):
+        # Load image
+        img = skimage.io.imread(path) / 255.0
+        if height is not None and width is not None:
+            ny = height
+            nx = width
+        elif height is not None:
+            ny = height
+            nx = img.shape[1] * ny / img.shape[0]
+        elif width is not None:
+            nx = width
+            ny = img.shape[0] * nx / img.shape[1]
+        else:
+            ny = img.shape[0]
+            nx = img.shape[1]
+
+        if len(img.shape) < 3:
+            img = np.dstack((img, img, img))
+
+        return skimage.transform.resize(img, (ny, nx)), [ny, nx, 3]

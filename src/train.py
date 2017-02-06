@@ -6,7 +6,7 @@ from trainer import Trainer
 
 # Model hyperparamaters
 EPOCHS = 1200000
-LEARNING_RATE = .1
+LEARNING_RATE = .0002
 BATCH_SIZE = 1
 
 # Training related paramaters

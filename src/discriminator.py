@@ -3,44 +3,66 @@ import tensorflow as tf
 
 
 class Discriminator(net.Net):
-    def __init__(self):
+    def __init__(self, filter_size=4):
         net.Net.__init__(self)
         print("Initialized new 'Discriminator' instance")
-        self.noise_multiplier = 1.
-        self.noise_decay = 1e-8
+        self.filter_size = filter_size
+        self.stride = [1, 2, 2, 1]
+        self.is_training = True
 
     def predict(self, inputs):
-        filter_size = 70
-        stride = [1, 2, 2, 1]
+        """
+        Predicts the probability a given input belongs to a targeted sample distribution
+        :param inputs: input tensor to predict with
+        :return: output tensor predicting the probability the input belongs to targeted sample distribution
+        """
 
         with tf.variable_scope('discriminator') as scope:
-            inputs_ = self.add_noise(inputs, self.noise_multiplier)
+            inputs_ = self.add_noise(inputs)
 
-            conv_e1_ = self.conv_layer(inputs_, 64,
-                                      shape=[filter_size, filter_size, 3, 3], act=self.leaky_relu,
-                                      stride=stride, norm=False, name='conv1')
-            conv_e1 = self.add_noise(conv_e1_, self.noise_multiplier)
+            conv1 = self.conv_layer(
+                inputs_, 64,
+                shape=[self.filter_size, self.filter_size, 3, 3],
+                activation=self.leaky_relu,
+                stride=self.stride,
+                normalize=False,
+                noisy=True,
+                name='conv1')
 
-            conv_e2_ = self.conv_layer(conv_e1, 128,
-                                      shape=[filter_size, filter_size, 3, 3], act=self.leaky_relu,
-                                      stride=stride, name='conv2')
-            conv_e2 = self.add_noise(conv_e2_, self.noise_multiplier)
+            conv2 = self.conv_layer(
+                conv1, 128,
+                shape=[self.filter_size, self.filter_size, 3, 3],
+                activation=self.leaky_relu,
+                stride=self.stride,
+                noisy=True,
+                name='conv2')
 
-            conv_e3_ = self.conv_layer(conv_e2, 256,
-                                      shape=[filter_size, filter_size, 3, 3], act=self.leaky_relu,
-                                      stride=stride, name='conv3')
-            conv_e3 = self.add_noise(conv_e3_, self.noise_multiplier)
+            conv3 = self.conv_layer(
+                conv2, 256,
+                shape=[self.filter_size, self.filter_size, 3, 3],
+                activation=self.leaky_relu,
+                stride=self.stride,
+                noisy=True,
+                name='conv3')
 
-            conv_e4_ = self.conv_layer(conv_e3, 512,
-                                      shape=[filter_size, filter_size, 3, 3], act=self.leaky_relu,
-                                      stride=stride, name='conv4')
-            conv_e4 = self.add_noise(conv_e4_, self.noise_multiplier)
+            conv4 = self.conv_layer(
+                conv3, 512,
+                shape=[self.filter_size, self.filter_size, 3, 3],
+                activation=self.leaky_relu,
+                stride=self.stride,
+                noisy=True,
+                name='conv4')
 
-            conv_e5 = self.conv_layer(conv_e4, 1,
-                                      shape=[filter_size, filter_size, 3, 1], act=None,
-                                      stride=stride, name='conv5')
+            output_ = self.conv_layer(
+                conv4, 1,
+                shape=[self.filter_size, self.filter_size, 3, 1],
+                activation=tf.nn.sigmoid,
+                stride=self.stride,
+                noisy=True,
+                name='conv5')
 
-            prediction = tf.nn.sigmoid(conv_e5, name='prediction')
-            self.noise_multiplier = self.noise_multiplier - self.noise_decay
+            output = tf.reduce_mean(output_)
+
+            #output = tf.Print(output, [output, conv4])
             scope.reuse_variables()
-            return prediction, conv_e5
+            return output

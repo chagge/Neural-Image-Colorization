@@ -51,7 +51,10 @@ class Helpers:
 
     # Renders the generated image given a tensorflow session and a variable image (x)
     @staticmethod
-    def render_img(img, display=False, path_out=OUT_PATH):
+    def render_img(img, display=False, path_out=None):
+        if not path_out:
+            path_out = os.path.abspath(DIR_PATH + '/../output/out_%.0f.jpg' % time.time())
+
         clipped_img = np.clip(img, 0., 1.)
         shaped_img = np.reshape(clipped_img, img.shape[1:])
 

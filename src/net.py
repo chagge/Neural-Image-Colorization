@@ -16,41 +16,121 @@ class Net(object):
         self.stride = STRIDE
 
     # Constructs and returns a network layer tailored to one's specifications
-    def conv_layer(self, inputs, out_size, name, shape=None, pad='SAME', norm=True, dropout=False, act=tf.nn.relu, stride=STRIDE):
+    def conv_layer(self, inputs, out_size, name,
+                   activation=tf.nn.relu,
+                   dropout=False,
+                   noisy=False,
+                   normalize=True,
+                   pad='SAME',
+                   shape=None,
+                   stride=STRIDE,
+                   is_training=False):
+
+        """
+        Performs a convolution and auxiliary operation for training related stability on a given input
+        :param inputs: input tensor to perform convolution on
+        :param out_size:
+        :param name:
+        :param activation:
+        :param dropout:
+        :param noisy:
+        :param normalize:
+        :param pad:
+        :param shape:
+        :param stride:
+        :param is_training:
+        :return:
+        """
+
         with tf.variable_scope(name):
             if not shape:
                 in_size = inputs.get_shape().as_list()[3]
                 shape = self.filter_shape + [in_size] + [out_size]
 
-            filters = tf.Variable(tf.truncated_normal(mean=0., stddev=.1, shape=shape), name='filter')
+            filters = tf.Variable(tf.truncated_normal(mean=0., stddev=.02, shape=shape), name='filter')
+            if name == 'conv1e':
+                inputs = tf.Print(inputs, [inputs])
+                print("here")
             x = tf.nn.conv2d(inputs, filters, padding=pad, strides=stride)
             num_out_maps = shape[3]
             bias = tf.Variable(tf.constant(.1, shape=[num_out_maps]), name='bias')
             x = tf.nn.bias_add(x, bias)
 
-            if norm:
-                x = self.instance_normalize(x)
-
-            if dropout:
-                x = tf.nn.dropout(x, keep_prob=self.dropout_keep)
-
-            if act:
-                x = act(x)
-
+            x = self.batch_normalize(x, is_training) if normalize else x
+            x = tf.nn.dropout(x, keep_prob=self.dropout_keep) if dropout else x
+            x = activation(x) if activation else x
+            x = self.add_noise(x) if noisy else x
             return x
 
     @staticmethod
-    def add_noise(inputs, multiplier=1.):
-        if multiplier <= 0:
-            return inputs
-        noise = tf.random_normal(tf.shape(inputs), mean=0., stddev=.2) * multiplier
+    def add_noise(inputs):
+        """
+
+        :param inputs:
+        :return:
+        """
+
+        noise = tf.random_normal(
+            tf.shape(inputs),
+            mean=0.,
+            stddev=.02)
         inputs = tf.add(inputs, noise)
         return inputs
+
+    # Batch normalize inputs to reduce covariate shift and improve the efficiency of training
+    @staticmethod
+    def batch_normalize(inputs, is_training):
+        """
+
+        :param inputs:
+        :param is_training:
+        :return:
+        """
+
+        shape = inputs.get_shape().as_list()
+        if shape[0] is 1:
+            return Net.instance_normalize(inputs)
+
+        with tf.variable_scope("batch_normalization"):
+            num_maps = shape[3]
+
+            # Trainable variables for scaling and offsetting our inputs
+            scale = tf.Variable(tf.ones([num_maps], dtype=tf.float32))
+            offset = tf.Variable(tf.zeros([num_maps], dtype=tf.float32))
+
+            # Mean and variances related to our current batch
+            batch_mean, batch_var = tf.nn.moments(inputs, [0, 1, 2])
+
+            # Create an optimizer to maintain a 'moving average'
+            ema = tf.train.ExponentialMovingAverage(decay=.9)
+
+            def ema_retrieve():
+                return ema.average(batch_mean), ema.average(batch_var)
+
+            # If the net is being trained, update the average every training step
+            def ema_update():
+                ema_apply = ema.apply([batch_mean, batch_var])
+
+                # Make sure to compute the new means and variances prior to returning their values
+                with tf.control_dependencies([ema_apply]):
+                    return tf.identity(batch_mean), tf.identity(batch_var)
+
+            # Retrieve the means and variances and apply the BN transformation
+            mean, var = tf.cond(tf.equal(is_training, True), ema_update, ema_retrieve)
+            bn_inputs = tf.nn.batch_normalization(inputs, mean, var, offset, scale, EPSILON)
+
+        return bn_inputs
 
     # Instance normalize inputs to reduce covariate shift and reduce dependency on input contrast to improve results
     @staticmethod
     def instance_normalize(inputs):
-        with tf.variable_scope('normalization'):
+        """
+
+        :param inputs:
+        :return:
+        """
+
+        with tf.variable_scope('instance_normalization'):
             batch, height, width, channels = [_.value for _ in inputs.get_shape()]
             mu, sigma_sq = tf.nn.moments(inputs, [1, 2], keep_dims=True)
 
