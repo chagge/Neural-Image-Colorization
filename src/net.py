@@ -47,25 +47,31 @@ class Net(object):
                 in_size = inputs.get_shape().as_list()[3]
                 shape = self.filter_shape + [in_size] + [out_size]
 
-            filters = tf.Variable(tf.truncated_normal(mean=0., stddev=.02, shape=shape), name='filter')
-            if name == 'conv1e':
-                inputs = tf.Print(inputs, [inputs])
-                print("here")
+            # Create filters and perform convolution
+            filters = tf.get_variable(
+                'filters',
+                initializer=tf.truncated_normal(shape, mean=0., stddev=.02))
             x = tf.nn.conv2d(inputs, filters, padding=pad, strides=stride)
+
+            # Add bias
             num_out_maps = shape[3]
-            bias = tf.Variable(tf.constant(.1, shape=[num_out_maps]), name='bias')
+            bias = tf.get_variable(
+                'bias',
+                initializer=tf.constant(.1, shape=[num_out_maps]))
             x = tf.nn.bias_add(x, bias)
 
+            # Training related ops
             x = self.batch_normalize(x, is_training) if normalize else x
             x = tf.nn.dropout(x, keep_prob=self.dropout_keep) if dropout else x
-            x = activation(x) if activation else x
+            x = activation(x) if activation is not None else x
             x = self.add_noise(x) if noisy else x
+
             return x
 
     @staticmethod
     def add_noise(inputs):
         """
-
+        Adds gaussian noise
         :param inputs:
         :return:
         """
@@ -87,11 +93,12 @@ class Net(object):
         :return:
         """
 
-        shape = inputs.get_shape().as_list()
-        if shape[0] is 1:
+        batch_size = inputs.get_shape()[0]
+        if batch_size is 1 or True:
             return Net.instance_normalize(inputs)
 
         with tf.variable_scope("batch_normalization"):
+            shape = inputs.get_shape().as_list()
             num_maps = shape[3]
 
             # Trainable variables for scaling and offsetting our inputs

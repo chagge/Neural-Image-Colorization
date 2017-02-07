@@ -11,6 +11,8 @@ class Generator(net.Net):
     def build(self, inputs):
         with tf.variable_scope('generator'):
 
+
+
             # Encoder
             self.conv1e = self.conv_layer(
                 inputs, 64,
@@ -54,38 +56,38 @@ class Generator(net.Net):
                 name='conv8e')
 
             # U-Net decoder
-            self.conv1d = self.__resid_layer(
+            self.conv1d = self.__residual_layer(
                 self.conv8e, self.conv7e, 512,
                 dropout=True,
                 name='conv1d')
 
-            self.conv2d = self.__resid_layer(
+            self.conv2d = self.__residual_layer(
                 self.conv1d, self.conv6e, 512,
                 dropout=True,
                 name='conv2d')
 
-            self.conv3d = self.__resid_layer(
+            self.conv3d = self.__residual_layer(
                 self.conv2d, self.conv5e, 512,
                 dropout=True,
                 name='conv3d')
 
-            self.conv4d = self.__resid_layer(
+            self.conv4d = self.__residual_layer(
                 self.conv3d, self.conv4e, 512,
                 name='conv4d')
 
-            self.conv5d = self.__resid_layer(
+            self.conv5d = self.__residual_layer(
                 self.conv4d, self.conv3e, 256,
                 name='conv5d')
 
-            self.conv6d = self.__resid_layer(
+            self.conv6d = self.__residual_layer(
                 self.conv5d, self.conv2e, 128,
                 name='conv6d')
 
-            self.conv7d = self.__resid_layer(
+            self.conv7d = self.__residual_layer(
                 self.conv6d, self.conv1e, 64,
                 name='conv7d')
 
-            self.output = self.__resid_layer(
+            self.output = self.__residual_layer(
                 self.conv7d, inputs, 2,
                 activation=tf.nn.sigmoid,
                 name='conv8d')
@@ -96,7 +98,7 @@ class Generator(net.Net):
         saver = tf.train.import_meta_graph(file_path + '.meta')
         saver.restore(tf.get_default_session(), file_path)
 
-    def __deconv_layer(
+    def __upsample_layer(
             self, inputs, out_size, activation, name,
             normalize=True,
             dropout=False):
@@ -134,12 +136,12 @@ class Generator(net.Net):
             deconv = tf.nn.dropout(deconv, keep_prob=self.dropout_keep) if dropout else deconv
             return activation(deconv)
 
-    def __resid_layer(self, inputs, skip_activations, out_size, name,
+    def __residual_layer(self, inputs, skip_activations, out_size, name,
                       activation=tf.nn.relu,
                       normalize=True,
                       dropout=False):
 
-        conv_ = self.__deconv_layer(
+        conv_ = self.__upsample_layer(
             inputs, out_size,
             activation=activation,
             normalize=normalize,

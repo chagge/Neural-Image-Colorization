@@ -27,8 +27,8 @@ class Trainer:
 
         bw_shape = [None, self.train_height, self.train_width, 1]
         color_shape = bw_shape[:3] + [3]
-        gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape)
-        disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape)
+        gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape, name='generator_placeholder')
+        disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape, name='descriminator_placeholder')
 
         # Build the generator
         self.gen.build(gen_placeholder)
@@ -38,26 +38,21 @@ class Trainer:
         prob_sample = self.disc.predict(sample) + EPSILON
         prob_target = self.disc.predict(disc_placeholder) + EPSILON
 
-        # Losses
-        gen_loss = -tf.reduce_mean(tf.log(prob_sample))
-        disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1 - prob_sample))
-
         # Optimization
-        gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="generator")
-        disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="discriminator")
-
+        disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1. - prob_sample))
+        disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
         disc_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
-        gen_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
-
-        gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
-        gen_update = gen_opt.apply_gradients(gen_grads)
-
         disc_grads = disc_opt.compute_gradients(disc_loss, disc_vars)
         disc_update = disc_opt.apply_gradients(disc_grads)
 
+        gen_loss = -tf.reduce_mean(tf.log(prob_sample))
+        gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
+        gen_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
+        gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
+        gen_update = gen_opt.apply_gradients(gen_grads)
+
         # Training data retriever ops
         example = self.next_example(height=self.train_height, width=self.train_width)
-        batch = tf.train.batch([example], batch_size=batch_size)
 
         # delete this when done
         CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -65,11 +60,11 @@ class Trainer:
         filename_queue_ = tf.train.string_input_producer(filenames_)
         r = tf.WholeFileReader()
         fn_, f_ = r.read(filename_queue_)
-        rgb_ = tf.image.decode_jpeg(f_, channels=1)
-        img_ = tf.image.resize_images(rgb_, [self.train_height, self.train_width])
-        img_ = tf.div(img_, 255.)
-        #f_ = tf.image.rgb_to_hsv(img_)
-        f = tf.expand_dims(img_, dim=0)
+        rgb_ = tf.image.decode_jpeg(f_, channels=3)
+        rgb_ = tf.image.resize_images(rgb_, [self.train_height, self.train_width])
+        img_ = tf.div(rgb_, 255.)
+        img_ = tf.expand_dims(img_, dim=0)
+        v_ = tf.slice(img_, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
 
         print("Initializing session and begin threading..")
         self.session.run(tf.initialize_all_variables())
@@ -78,10 +73,7 @@ class Trainer:
         start_time = time.time()
 
         for i in range(epochs):
-            #example_bw_ = tf.image.rgb_to_grayscale(example)
-            #example_bw = tf.expand_dims(example_bw_, dim=0)
-            example_color = tf.image.rgb_to_hsv(batch)
-            #example_color = tf.expand_dims(example_color_, dim=0)
+            example_color = tf.image.rgb_to_hsv(example)
             example_bw = tf.slice(
                 example_color,
                 [0, 0, 0, 2],
@@ -89,29 +81,28 @@ class Trainer:
 
             bw = example_bw.eval()
             color = example_color.eval()
-            #s = sample.eval(feed_dict={gen_placeholder: bw})
 
             _, d_loss, d_pred = self.session.run(
                 [disc_update, disc_loss, prob_target],
                 feed_dict={gen_placeholder: bw, disc_placeholder: color})
 
-            _, g_loss, g_pred, g = self.session.run(
-                [gen_update, gen_loss, prob_sample, gen_grads],
+            _, g_loss, g_pred = self.session.run(
+                [gen_update, gen_loss, prob_sample],
                 feed_dict={gen_placeholder: bw})
-            print(1)
+
             # Print current epoch number and errors if warranted
             if self.print_training_status and i % self.print_n == 0:
                 total_loss = g_loss + d_loss
-                log1 = "Epoch %06d | Total Loss %.010f | " % (i, total_loss)
-                log2 = "Generator Loss %.010f | " % g_loss
-                log3 = "Discriminator Loss %.010f" % d_loss
+                log1 = "Epoch %06d | Total Loss %.010f || " % (i, total_loss)
+                log2 = "Generator Loss %.010f (Prediction: %.02f) || " % (g_loss, g_pred)
+                log3 = "Discriminator Loss %.010f (Prediction: %.02f)" % (d_loss, d_pred)
                 print(log1 + log2 + log3)
 
                 # test out
                 self.gen.is_training = False
                 rgb = self.session.run(
                     tf.image.hsv_to_rgb(sample),
-                    feed_dict={gen_placeholder: f.eval()})
+                    feed_dict={gen_placeholder: v_.eval()})
                 Helpers.render_img(rgb)
                 self.gen.is_training = True
 
@@ -136,6 +127,7 @@ class Trainer:
         img = tf.image.decode_jpeg(file, channels=3)
         img = tf.image.resize_images(img, [height, width])
         img = tf.div(img, 255.)
+        img = tf.expand_dims(img, dim=0)
         return img
 
     # Returns whether or not there is a checkpoint available
