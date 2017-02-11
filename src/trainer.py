@@ -10,6 +10,7 @@ import numpy as np
 
 EPSILON = 1e-10
 MOMENTUM_B1 = .5
+NOISE_DECAY = 1e-8
 
 
 class Trainer:
@@ -22,37 +23,46 @@ class Trainer:
         self.train_height = training_dims['height']
         self.train_width = training_dims['width']
 
-    def train(self, epochs, learning_rate, batch_size):
-        Helpers.check_for_examples()
+    def train(self, epochs, learning_rate):
 
-        bw_shape = [None, self.train_height, self.train_width, 1]
-        color_shape = bw_shape[:3] + [3]
-        gen_placeholder = tf.placeholder(dtype=tf.float32, shape=bw_shape, name='generator_placeholder')
-        disc_placeholder = tf.placeholder(dtype=tf.float32, shape=color_shape, name='descriminator_placeholder')
+        # Set initial training shapes and placeholders
+        x_shape = [1, self.train_height, self.train_width, 1]
+        xy_shape = x_shape[:3] + [3]
+        x_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='input_placeholder')
+        xy_ph = tf.placeholder(dtype=tf.float32, shape=xy_shape, name='condition_placeholder')
+        z_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='noise_placeholder')
 
         # Build the generator
-        self.gen.build(gen_placeholder)
+        self.gen.build(z_ph, x_ph)
 
         # Generate a sample and attain the probability that the sample and the target are from the real distribution
+        gen_noise = tf.random_normal(x_shape, stddev=.02)
+        disc_noise = tf.random_normal(xy_shape, stddev=.1)
         sample = self.gen.output
-        prob_sample = self.disc.predict(sample) + EPSILON
-        prob_target = self.disc.predict(disc_placeholder) + EPSILON
+        disc_noise_ph = tf.placeholder(dtype=tf.float32, shape=xy_shape)
+        prob_sample = self.disc.predict(sample, disc_noise_ph)
+        prob_target = self.disc.predict(xy_ph, disc_noise_ph)
 
-        # Optimization
+        # Optimization ops for the discriminator
         disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1. - prob_sample))
         disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
         disc_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
-        disc_grads = disc_opt.compute_gradients(disc_loss, disc_vars)
+        disc_grads_ = disc_opt.compute_gradients(disc_loss, disc_vars)
+        disc_grads = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in disc_grads_]
         disc_update = disc_opt.apply_gradients(disc_grads)
 
+        # Optimization ops for the generator
         gen_loss = -tf.reduce_mean(tf.log(prob_sample))
         gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
         gen_opt = tf.train.AdamOptimizer(learning_rate, beta1=MOMENTUM_B1)
-        gen_grads = gen_opt.compute_gradients(gen_loss, gen_vars)
+        gen_grads_ = gen_opt.compute_gradients(gen_loss, gen_vars)
+        gen_grads = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gen_grads_]
         gen_update = gen_opt.apply_gradients(gen_grads)
 
         # Training data retriever ops
         example = self.next_example(height=self.train_height, width=self.train_width)
+        example_label = tf.image.rgb_to_hsv(example)
+        example_condition = tf.slice(example_label, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
 
         # delete this when done
         CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -65,46 +75,52 @@ class Trainer:
         img_ = tf.div(rgb_, 255.)
         img_ = tf.expand_dims(img_, dim=0)
         v_ = tf.slice(img_, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
+        colored_sample = tf.image.hsv_to_rgb(sample)
 
+        # Start session and begin threading
         print("Initializing session and begin threading..")
         self.session.run(tf.initialize_all_variables())
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
         start_time = time.time()
 
+        disc_noise_multiplier = 1.
         for i in range(epochs):
-            example_color = tf.image.rgb_to_hsv(example)
-            example_bw = tf.slice(
-                example_color,
-                [0, 0, 0, 2],
-                [batch_size, self.train_height, self.train_width, 1])
 
-            bw = example_bw.eval()
-            color = example_color.eval()
+            conditional_img = example_condition.eval()
+            label_img = example_label.eval()
+            _gen_noise = gen_noise.eval()
+            _disc_noise = disc_noise.eval() * disc_noise_multiplier
 
-            _, d_loss, d_pred = self.session.run(
-                [disc_update, disc_loss, prob_target],
-                feed_dict={gen_placeholder: bw, disc_placeholder: color})
+            disc_noise_multiplier -= NOISE_DECAY
 
-            _, g_loss, g_pred = self.session.run(
-                [gen_update, gen_loss, prob_sample],
-                feed_dict={gen_placeholder: bw})
+            # Update steps
+            _, d_loss, d_pred = self.session.run([disc_update, disc_loss, prob_target],
+                                                 feed_dict={x_ph: conditional_img,
+                                                            xy_ph: label_img,
+                                                            z_ph: _gen_noise,
+                                                            disc_noise_ph: _disc_noise})
+
+            _, g_loss, g_pred = self.session.run([gen_update, gen_loss, prob_sample],
+                                                 feed_dict={x_ph: conditional_img,
+                                                            z_ph: _gen_noise,
+                                                            disc_noise_ph: _disc_noise})
 
             # Print current epoch number and errors if warranted
             if self.print_training_status and i % self.print_n == 0:
                 total_loss = g_loss + d_loss
-                log1 = "Epoch %06d | Total Loss %.010f || " % (i, total_loss)
+                log1 = "Epoch %06d || Total Loss %.010f || " % (i, total_loss)
                 log2 = "Generator Loss %.010f (Prediction: %.02f) || " % (g_loss, g_pred)
                 log3 = "Discriminator Loss %.010f (Prediction: %.02f)" % (d_loss, d_pred)
                 print(log1 + log2 + log3)
 
-                # test out
-                self.gen.is_training = False
+                disc_noise_multiplier -= NOISE_DECAY
+
+                # test out delete when done
                 rgb = self.session.run(
-                    tf.image.hsv_to_rgb(sample),
-                    feed_dict={gen_placeholder: v_.eval()})
+                    colored_sample,
+                    feed_dict={x_ph: v_.eval(), z_ph: _gen_noise, disc_noise_ph: _disc_noise})
                 Helpers.render_img(rgb)
-                self.gen.is_training = True
 
         # Alert that training has been completed and print the run time
         elapsed = time.time() - start_time
