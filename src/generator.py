@@ -7,11 +7,12 @@ class Generator(net.Net):
         net.Net.__init__(self)
         print("Initialized new 'Generator' instance")
 
-    def build(self, z, x):
+    def build(self, z, x, oc=2):
         """
 
         :param z: gaussian noise tensor
         :param x: conditional tensor
+        :param oc: number of output channels
         :return:
         """
         with tf.variable_scope('generator'):
@@ -35,7 +36,7 @@ class Generator(net.Net):
             self.conv5d = self.__residual_layer(self.conv4d, self.conv3e, 256, name='conv5d')
             self.conv6d = self.__residual_layer(self.conv5d, self.conv2e, 128, name='conv6d')
             self.conv7d = self.__residual_layer(self.conv6d, self.conv1e, 64, name='conv7d')
-            self.output = self.__residual_layer(self.conv7d, x, 2, norm=False, name='output')
+            self.output = self.__upsample_layer(self.conv7d, oc, tf.nn.sigmoid, norm=False, name='output')
 
     def __upsample_layer(self, inputs, out_size, act, name, norm=True, drop=False):
         with tf.variable_scope(name):

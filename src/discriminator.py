@@ -11,22 +11,25 @@ class Discriminator(net.Net):
         self.stride2 = [1, 1, 1, 1]
         self.is_training = True
 
-    def predict(self, xy, noise=None, n=4):
+    def predict(self, y, x, noise=None, n=4):
         """
         Predicts the probability a given input belongs to a targeted sample distribution
 
-        :param xy: inputs tensor
+        :param y: input tensor
+        :param x: conditional tensor
         :param noise: regularizing gaussian noise tensor to add to xy
         :return: probability tensor, logit tensor, average probability tensor
         """
 
-        with tf.variable_scope('discriminator'):
-            if noise is not None:
-                xy = xy + noise
+        if noise is not None:
+            y += noise
 
+        xy = tf.concat(3, [y, x])
+
+        with tf.variable_scope('discriminator'):
             # Extract image patches
-            shape = lambda x: [1, x, x, 1]
-            patches = tf.extract_image_patches(xy, ksizes=shape(n), strides=shape(n), rates=shape(1), padding='SAME')
+            nshape = lambda x: [1, x, x, 1]
+            patches = tf.extract_image_patches(xy, ksizes=nshape(n), strides=nshape(n), rates=nshape(1), padding='SAME')
             patches = tf.reshape(patches, [-1, 64, 64, 3])
 
             conv1 = self.conv_layer(patches, 64, act=self.leaky_relu, norm=False, pad='SAME', stride=self.stride1, name='conv1')

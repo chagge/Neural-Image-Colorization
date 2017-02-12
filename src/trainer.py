@@ -27,21 +27,23 @@ class Trainer:
 
         # Set initial training shapes and placeholders
         x_shape = [1, self.train_height, self.train_width, 1]
-        xy_shape = x_shape[:3] + [3]
+        y_shape = x_shape[:3] + [2]
         x_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='input_placeholder')
-        xy_ph = tf.placeholder(dtype=tf.float32, shape=xy_shape, name='condition_placeholder')
+        y_ph = tf.placeholder(dtype=tf.float32, shape=y_shape, name='condition_placeholder')
         z_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='noise_placeholder')
 
-        # Build the generator
+        # Build the generator to setup layers and variables
         self.gen.build(z_ph, x_ph)
 
         # Generate a sample and attain the probability that the sample and the target are from the real distribution
-        gen_noise = tf.random_normal(x_shape, stddev=.02)
-        disc_noise = tf.random_normal(xy_shape, stddev=.1)
         sample = self.gen.output
-        disc_noise_ph = tf.placeholder(dtype=tf.float32, shape=xy_shape)
-        prob_sample = self.disc.predict(sample, disc_noise_ph)
-        prob_target = self.disc.predict(xy_ph, disc_noise_ph)
+        gen_noise = tf.random_normal(x_shape, stddev=.02)
+
+        disc_noise = tf.random_normal(y_shape, stddev=.02)
+        disc_noise_ph = tf.placeholder(dtype=tf.float32, shape=y_shape)
+
+        prob_sample = self.disc.predict(sample, x_ph, disc_noise_ph)
+        prob_target = self.disc.predict(y_ph, x_ph, disc_noise_ph)
 
         # Optimization ops for the discriminator
         disc_loss = -tf.reduce_mean(tf.log(prob_target) + tf.log(1. - prob_sample))
@@ -61,10 +63,11 @@ class Trainer:
 
         # Training data retriever ops
         example = self.next_example(height=self.train_height, width=self.train_width)
-        example_label = tf.image.rgb_to_hsv(example)
-        example_condition = tf.slice(example_label, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
+        example = tf.image.rgb_to_hsv(example)
+        example_condition = tf.slice(example, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
+        example_label = tf.slice(example, [0, 0, 0, 0], [1, self.train_height, self.train_width, 2])
 
-        # delete this when done
+        # delete this when done (retrieves image to render while training)
         CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
         filenames_ = tf.train.match_filenames_once(CURRENT_PATH + '/../nyc.jpg')
         filename_queue_ = tf.train.string_input_producer(filenames_)
@@ -75,7 +78,7 @@ class Trainer:
         img_ = tf.div(rgb_, 255.)
         img_ = tf.expand_dims(img_, dim=0)
         v_ = tf.slice(img_, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
-        colored_sample = tf.image.hsv_to_rgb(sample)
+        colored_sample = tf.image.hsv_to_rgb(tf.concat(3, [sample, v_]))
 
         # Start session and begin threading
         print("Initializing session and begin threading..")
@@ -97,7 +100,7 @@ class Trainer:
             # Update steps
             _, d_loss, d_pred = self.session.run([disc_update, disc_loss, prob_target],
                                                  feed_dict={x_ph: conditional_img,
-                                                            xy_ph: label_img,
+                                                            y_ph: label_img,
                                                             z_ph: _gen_noise,
                                                             disc_noise_ph: _disc_noise})
 

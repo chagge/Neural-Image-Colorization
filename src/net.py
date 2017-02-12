@@ -75,6 +75,7 @@ class Net(object):
             normalized = (inputs - mu) / (sigma_sq + EPSILON) ** .5
 
             return tf.add(tf.mul(scale, normalized), shift)
+        tf.get_variable_scope().reuse_variables()
 
     @staticmethod
     def leaky_relu(inputs, slope=.2):
