@@ -6,8 +6,9 @@ import tensorflow as tf
 from trainer import Trainer
 
 # Model hyperparamaters
-EPOCHS = 1200000
-LEARNING_RATE = .0002
+BATCH_SIZE = 64
+EPOCHS = 10000
+LEARNING_RATE = 0.00005
 
 # Training related paramaters
 TRAINING_DIMS = {'height': 256, 'width': 256}
@@ -27,5 +28,5 @@ with tf.Session() as sess:
 
     # Train them
     Helpers.check_for_examples()
-    t = Trainer(sess, gen, disc, TRAINING_DIMS, PRINT_TRAINING_STATUS, PRINT_EVERY_N)
+    t = Trainer(sess, gen, disc, BATCH_SIZE, TRAINING_DIMS, PRINT_TRAINING_STATUS, PRINT_EVERY_N)
     t.train(EPOCHS, LEARNING_RATE)

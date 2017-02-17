@@ -11,7 +11,7 @@ class Discriminator(net.Net):
         self.stride2 = [1, 1, 1, 1]
         self.is_training = True
 
-    def predict(self, y, x, noise=None, n=4):
+    def predict(self, y, x, noise=None):
         """
         Predicts the probability a given input belongs to a targeted sample distribution
 
@@ -27,18 +27,15 @@ class Discriminator(net.Net):
         xy = tf.concat(3, [y, x])
 
         with tf.variable_scope('discriminator'):
-            # Extract image patches
-            nshape = lambda x: [1, x, x, 1]
-            patches = tf.extract_image_patches(xy, ksizes=nshape(n), strides=nshape(n), rates=nshape(1), padding='SAME')
-            patches = tf.reshape(patches, [-1, 64, 64, 3])
+            conv0 = self.conv_layer(xy, 64, act=self.leaky_relu, norm=False, pad='SAME', stride=self.stride1, name='conv0')
 
-            conv1 = self.conv_layer(patches, 64, act=self.leaky_relu, norm=False, pad='SAME', stride=self.stride1, name='conv1')
-            conv2 = self.conv_layer(conv1, 128, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv2')
-            conv3 = self.conv_layer(conv2, 256, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv3')
-            conv4 = self.conv_layer(conv3, 512, act=self.leaky_relu, pad='SAME', stride=self.stride2, name='conv4')
+            conv1 = self.conv_layer(conv0, 128, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv1')
+            conv2 = self.conv_layer(conv1, 256, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv2')
+            conv3 = self.conv_layer(conv2, 512, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv3')
+            conv4 = self.conv_layer(conv3, 512, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv4')
 
-            conv5 = self.conv_layer(conv4, 1, act=tf.nn.sigmoid, norm=False, pad='SAME', stride=self.stride2, name='conv5')
-            prediction = tf.reduce_mean(conv5, name='prediction') + self.epsilon
+            conv5 = self.conv_layer(conv4, 512, act=self.leaky_relu, pad='SAME', stride=self.stride2, name='conv5')
+            conv6 = self.conv_layer(conv5, 512, act=None, norm=False, pad='SAME', stride=self.stride2, name='conv6')
 
         tf.get_variable_scope().reuse_variables()
-        return prediction
+        return conv6

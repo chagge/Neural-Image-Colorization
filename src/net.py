@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 DROPOUT_RATE = .5
-EPSILON = 1e-8
+EPSILON = 1e-12
 FILTER_SHAPE = [4, 4]
 SAMPLE_LEVEL = 2
 STRIDE = [1, SAMPLE_LEVEL, SAMPLE_LEVEL, 1]
@@ -41,7 +41,7 @@ class Net(object):
                 shape = self.filter_shape + [in_size] + [nmaps]
 
             # Create filters and perform convolution
-            filters = tf.get_variable('filters', initializer=tf.truncated_normal(shape, stddev=.02))
+            filters = tf.get_variable('weights', initializer=tf.truncated_normal(shape, stddev=.02))
             maps_ = tf.nn.conv2d(t, filters, padding=pad, strides=stride)
 
             # Add bias
