@@ -18,6 +18,12 @@ class Helpers:
     def __init__(self):
         pass
 
+    @staticmethod
+    def add_gradient_summary(grad, var):
+        if grad is not None:
+            #tf.summary.histogram(var.op.name + "/gradient", grad)
+            pass
+
     # Checks for training data to see if it's missing or not. Asks to download if missing.
     @staticmethod
     def check_for_examples():
@@ -43,6 +49,8 @@ class Helpers:
 
     @staticmethod
     def get_lib_dir():
+        if not os.path.isdir(LIB_DIR):
+            os.makedirs(LIB_DIR)
         return LIB_DIR
 
     @staticmethod

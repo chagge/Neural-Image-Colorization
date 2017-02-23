@@ -7,7 +7,7 @@ class Generator(net.Net):
         net.Net.__init__(self)
         print("Initialized new 'Generator' instance")
 
-    def build(self, z, x, nf=64, oc=2):
+    def build(self, x, nf=64, oc=2):
         """
 
         :param z: gaussian noise tensor
@@ -17,10 +17,10 @@ class Generator(net.Net):
         :return:
         """
         with tf.variable_scope('generator'):
-            inputs = tf.concat(3, [z, x])
+            #inputs = tf.concat(axis=3, values=[z, x])
 
             # Encoder
-            self.conv1e = self.conv_layer(inputs, nf, act=None, norm=False, name='conv1e')
+            self.conv1e = self.conv_layer(x, nf, act=None, norm=False, name='conv1e')
             self.conv2e = self.conv_layer(self.conv1e, nf * 2, act=self.leaky_relu, name='conv2e')
             self.conv3e = self.conv_layer(self.conv2e, nf * 4, act=self.leaky_relu, name='conv3e')
             self.conv4e = self.conv_layer(self.conv3e, nf * 8, act=self.leaky_relu, name='conv4e')
@@ -44,22 +44,24 @@ class Generator(net.Net):
         with tf.variable_scope(name):
             in_size = inputs.get_shape().as_list()[3]
             filters_shape = self.filter_shape + [out_size] + [in_size]
-            filters = tf.Variable(tf.truncated_normal(filters_shape, stddev=.02), name='weights')
+            filters = tf.get_variable('weights', initializer=tf.truncated_normal(filters_shape, stddev=.02))
+            tf.summary.histogram('weights', filters)
 
             # Get dimensions to use for the deconvolution operator
             shape = tf.shape(inputs)
             out_height = shape[1] * self.sample_level
             out_width = shape[2] * self.sample_level
             out_size = filters_shape[2]
-            out_shape = tf.pack([shape[0], out_height, out_width, out_size])
+            out_shape = tf.stack([shape[0], out_height, out_width, out_size])
 
             # Deconvolve and normalize the biased outputs
             conv_ = tf.nn.conv2d_transpose(inputs, filters, output_shape=out_shape, strides=self.stride)
-            bias = tf.Variable(tf.constant(.1, shape=[out_size]), name='bias')
+            bias = tf.get_variable('bias', initializer=tf.constant(.0, shape=[out_size]))
+            tf.summary.histogram('bias', bias)
             conv = tf.nn.bias_add(conv_, bias)
 
             # Training related ops
-            conv = self.instance_normalize(conv) if norm else conv
+            conv = self.batch_normalize(conv, self.is_training) if norm else conv
             conv = tf.nn.dropout(conv, keep_prob=self.dropout_keep) if drop else conv
             activations = act(conv)
             return activations
@@ -79,5 +81,5 @@ class Generator(net.Net):
         """
 
         conv = self.__upsample_layer(inputs, out_size, name, act=act, norm=norm, drop=drop)
-        join = tf.concat(3, [conv, skip])
+        join = conv + skip
         return join

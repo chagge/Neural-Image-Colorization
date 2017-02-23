@@ -9,76 +9,84 @@ import skimage.transform
 import numpy as np
 
 EPSILON = 1e-10
-MOMENTUM_B1 = .5
-NOISE_DECAY = 1e-8
 DISC_GRAD_CLIP = .01
-NUM_CRITIC = 5
+DISC_PER_GEN = 5
+RMSPROP_DECAY = .9
 
 
 class Trainer:
-    def __init__(self, session, gen, disc, batch_size, training_dims, print_training_status=True, print_every_n=100):
-        self.batch_size = batch_size
+    def __init__(self, session, gen, disc, opts):
         self.disc = disc
         self.gen = gen
+        self.lib_dir = Helpers.get_lib_dir()
         self.session = session
-        self.print_training_status = print_training_status
-        self.print_n = print_every_n
-        self.train_height = training_dims['height']
-        self.train_width = training_dims['width']
 
-    def train(self, epochs, learning_rate):
+        # Download training data if there is none
+        Helpers.check_for_examples()
+
+        # Assign each option as self.option_title = value
+        for key, value in opts.items():
+            eval_string = "self.%s = %s" % (key, value)
+            exec(eval_string)
+
+    def train(self):
         # Set initial training shapes and placeholders
-        x_shape = [None, self.train_height, self.train_width, 1]
+        x_shape = [None, self.training_height, self.training_width, 1]
         y_shape = x_shape[:3] + [2]
-        z_shape = [1] + x_shape[1:]
+        #z_shape = [1] + x_shape[1:]
 
-        x_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='input_placeholder')
-        y_ph = tf.placeholder(dtype=tf.float32, shape=y_shape, name='condition_placeholder')
-        z_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='noise_placeholder')
+        x_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='conditional_placeholder')
+        y_ph = tf.placeholder(dtype=tf.float32, shape=y_shape, name='label_placeholder')
+        #z_ph = tf.placeholder(dtype=tf.float32, shape=x_shape, name='noise_placeholder')
 
         # Build the generator to setup layers and variables
-        self.gen.build(x_ph, z_ph)
+        self.gen.build(x_ph)
 
         # Generate a sample and attain the probability that the sample and the target are from the real distribution
         sample = self.gen.output
 
-        gen_noise = tf.random_normal(z_shape, stddev=.02)
-        gen_noise_batch = gen_noise
-        for i in range(self.batch_size - 1):
-            gen_noise_batch = tf.concat(0, [gen_noise_batch, gen_noise])
+        #z = tf.random_normal(z_shape, stddev=.02)
+        #z_batch = z
+        #for i in range(self.batch_size - 1):
+            #z_batch = tf.concat(axis=0, values=[z_batch, z])
 
-        prob_sample = self.disc.predict(sample, x_ph)
-        prob_target = self.disc.predict(y_ph, x_ph)
+        prob_sample = self.disc.predict(sample, x_ph,)
+        prob_target = self.disc.predict(y_ph, x_ph, reuse_scope=True)
 
         # Optimization ops for the discriminator
-        disc_loss_real = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(prob_target, tf.ones_like(prob_target)))
-        disc_loss_fake = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(prob_sample, tf.zeros_like(prob_sample)))
-        disc_loss = disc_loss_real + disc_loss_fake
+        disc_loss = tf.reduce_mean(prob_target - prob_sample)
+        #tf.summary.scalar('Discriminator Loss', disc_loss)
         disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
-        disc_opt = tf.train.RMSPropOptimizer(learning_rate)
+        disc_opt = tf.train.RMSPropOptimizer(self.learning_rate, decay=RMSPROP_DECAY)
         disc_grads_ = disc_opt.compute_gradients(disc_loss, disc_vars)
         disc_grads = [(tf.clip_by_value(grad, -DISC_GRAD_CLIP, DISC_GRAD_CLIP), var) for grad, var in disc_grads_]
         disc_update = disc_opt.apply_gradients(disc_grads)
+        for grad, var in disc_grads:
+            Helpers.add_gradient_summary(grad, var)
 
         # Optimization ops for the generator
-        gen_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(prob_sample, tf.ones_like(prob_sample)))
+        gen_loss = tf.reduce_mean(prob_sample)
+        tf.summary.scalar('Generator Loss', gen_loss)
         gen_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
-        gen_opt = tf.train.RMSPropOptimizer(learning_rate)
+        gen_opt = tf.train.RMSPropOptimizer(self.learning_rate, decay=RMSPROP_DECAY)
         gen_grads_ = gen_opt.compute_gradients(gen_loss, gen_vars)
         gen_grads = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gen_grads_]
         gen_update = gen_opt.apply_gradients(gen_grads)
+        for grad, var in gen_grads:
+            Helpers.add_gradient_summary(grad, var)
 
         # Training data retriever ops
-        example = self.next_example(height=self.train_height, width=self.train_width)
-        example_condition = tf.slice(example, [0, 0, 2], [self.train_height, self.train_width, 1])
+        example = self.next_example(height=self.training_height, width=self.training_width)
+        example_condition = tf.slice(example, [0, 0, 2], [self.training_height, self.training_width, 1])
         example_condition = tf.div(example_condition, 255.)
-        example_label = tf.slice(example, [0, 0, 0], [self.train_height, self.train_width, 2])
+        example_condition = tf.expand_dims(example_condition, axis=0)
+        example_label = tf.slice(example, [0, 0, 0], [self.training_height, self.training_width, 2])
+        example_label = tf.expand_dims(example_label, axis=0)
 
-        min_queue_examples = 100
-        batch_condition, batch_label = tf.train.batch([example_condition, example_label], self.batch_size,
-                                                      num_threads=4, capacity=min_queue_examples + 2 * self.batch_size)
+        #capacity = self.batch_size * 2
+        #batch_condition, batch_label = tf.train.batch([example_condition, example_label], self.batch_size,
+        #                                              num_threads=4,
+        #                                              capacity=capacity)
 
         # delete this when done (retrieves image to render while training)
         CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -87,51 +95,65 @@ class Trainer:
         r = tf.WholeFileReader()
         fn_, f_ = r.read(filename_queue_)
         rgb_ = tf.image.decode_jpeg(f_, channels=3)
-        rgb_ = tf.image.resize_images(rgb_, [self.train_height, self.train_width])
+        rgb_ = tf.image.resize_images(rgb_, [self.training_height, self.training_width])
         img_ = tf.image.rgb_to_hsv(rgb_)
-        img_ = tf.expand_dims(img_, dim=0)
-        v_ = tf.slice(img_, [0, 0, 0, 2], [1, self.train_height, self.train_width, 1])
-        v_ = tf.div(v_, 255.)
-        colored_sample = tf.image.hsv_to_rgb(tf.concat(3, [sample, tf.mul(v_, 255.)]))
-        colored_sample = tf.div(colored_sample, 255.)
+        img_ = tf.expand_dims(img_, axis=0)
+        v_ = tf.slice(img_, [0, 0, 0, 2], [1, self.training_height, self.training_width, 1]) / 255.
+        colored_sample = tf.image.hsv_to_rgb(tf.concat(axis=3, values=[sample, tf.multiply(v_, 255.)])) / 255.
 
         # Start session and begin threading
         print("Initializing session and begin threading..")
-        self.session.run(tf.initialize_all_variables())
+        self.session.run(tf.global_variables_initializer())
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
         start_time = time.time()
 
-        for i in range(epochs):
+        saver = tf.train.Saver(gen_vars)
+        if self.model_path:
+            saver = tf.train.Saver()
+            saver.restore(self.session, self.model_path)
 
-            # Update steps
-            for _ in range(NUM_CRITIC):
-                conditional_batch = batch_condition.eval()
-                label_batch = batch_label.eval()
-                _gen_noise_batch = gen_noise_batch.eval()
-                __, d_loss = self.session.run([disc_update, disc_loss],
-                                              feed_dict={x_ph: conditional_batch, y_ph: label_batch, z_ph: _gen_noise_batch})
+        merged = tf.summary.merge_all()
+        train_writer = tf.summary.FileWriter('log/train', self.session.graph)
 
-            conditional_batch = batch_condition.eval()
-            _gen_noise_batch = gen_noise_batch.eval()
-            _, g_loss = self.session.run([gen_update, gen_loss],
-                                         feed_dict={x_ph: conditional_batch, z_ph: _gen_noise_batch})
+        for i in range(self.iterations):
+            try:
+                # Update discriminator DISC_PER_GEN times
+                for _ in range(DISC_PER_GEN):
+                    # _z_batch = z_batch.eval()
+                    feed_dict = {x_ph: example_condition.eval(), y_ph: example_label.eval()}
+                    __, d_loss = self.session.run([disc_update, disc_loss], feed_dict=feed_dict)
 
-            # Print current epoch number and errors if warranted
-            if self.print_training_status and i % self.print_n == 0:
-                total_loss = g_loss + d_loss
-                log1 = "Epoch %06d || Total Loss %.010f || " % (i, total_loss)
-                log2 = "Generator Loss %.010f || " % (g_loss)
-                log3 = "Discriminator Loss %.010f" % (d_loss)
-                print(log1 + log2 + log3)
+                # Update generator
+                # _z_batch = z_batch.eval()
+                feed_dict = {x_ph: example_condition.eval()}
+                _, g_loss, summary = self.session.run([gen_update, gen_loss, merged], feed_dict=feed_dict)
 
-                # test out delete when done
-                _gen_noise_i = gen_noise.eval()
-                rgb = self.session.run(
-                    colored_sample,
-                    feed_dict={x_ph: v_.eval(),
-                               z_ph: _gen_noise_i})
-                Helpers.render_img(rgb)
+                train_writer.add_summary(summary, i)
+
+                # Print current epoch number and errors if warranted
+                if i % self.print_every == 0:
+                    total_loss = g_loss + d_loss
+                    log1 = "Epoch %06d || Total Loss %.010f || " % (i, total_loss)
+                    log2 = "Generator Loss %.010f || Discriminator Loss %.010f" % (g_loss, d_loss)
+                    print(log1 + log2)
+
+                    # test out delete when done
+                    # _z_i = z.eval()
+                    rgb = self.session.run(colored_sample, feed_dict={x_ph: v_.eval()})
+                    self.disc.is_training = False
+                    self.gen.is_training = False
+                    Helpers.render_img(rgb)
+                    self.disc.is_training = True
+                    self.gen.is_training = True
+
+                # Save a checkpoint of the model
+                if i % self.save_every == 0:
+                    model_path = self.lib_dir + '/generator_%s' % time.time()
+                    self.__save_model(saver, model_path)
+
+            except tf.errors.OutOfRangeError:
+                next
 
         # Alert that training has been completed and print the run time
         elapsed = time.time() - start_time
@@ -139,7 +161,10 @@ class Trainer:
         coord.request_stop()
         coord.join(threads)
 
-        self.__save_model(gen_vars)
+        # Save the trained model and close the tensorflow session
+        model_path = self.lib_dir + '/generator_%s' % time.time()
+        self.__save_model(saver, model_path)
+        self.session.close()
 
     @staticmethod
     # Returns an image in both its grayscale and rgb formats
@@ -154,21 +179,12 @@ class Trainer:
         img = tf.image.decode_jpeg(file, channels=3)
         img = tf.image.resize_images(img, [height, width])
         img = tf.image.rgb_to_hsv(img)
-        #img = tf.expand_dims(img, dim=0)
         return img
 
-    # Returns whether or not there is a checkpoint available
-    def __is_trained(self):
-        lib_dir = Helpers.get_lib_dir
-        return os.path.isfile(lib_dir + '/generator.meta')
-
-    def __save_model(self, variables):
-        print("Proceeding to save weights..")
-        lib_dir = Helpers.get_lib_dir()
-        if not os.path.isdir(lib_dir):
-            os.makedirs(lib_dir)
-        saver = tf.train.Saver(variables)
-        saver.save(self.session, lib_dir + '/generator')
+    def __save_model(self, saver, path):
+        print("Proceeding to save weights at '%s'" % path)
+        saver.save(self.session, path)
+        print("Weights have been saved.")
 
     # Returns a resized numpy array of an image specified by its path
     def load_img_to(self, path, height=None, width=None):
@@ -191,10 +207,3 @@ class Trainer:
             img = np.dstack((img, img, img))
 
         return skimage.transform.resize(img, (ny, nx)), [ny, nx, 3]
-
-    def norm(self, inputs):
-        _shifted = tf.sub(inputs, tf.reduce_min(inputs)),
-        _range = tf.sub(tf.reduce_max(inputs), tf.reduce_min(inputs))
-        normed = tf.div(_shifted, _range)
-
-        return normed

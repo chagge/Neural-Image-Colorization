@@ -11,22 +11,26 @@ class Discriminator(net.Net):
         self.stride2 = [1, 1, 1, 1]
         self.is_training = True
 
-    def predict(self, y, x, noise=None):
+    def predict(self, y, x, noise=None, reuse_scope=False):
         """
         Predicts the probability a given input belongs to a targeted sample distribution
 
         :param y: input tensor
         :param x: conditional tensor
         :param noise: regularizing gaussian noise tensor to add to xy
+        :param reuse_scope:
         :return: probability tensor, logit tensor, average probability tensor
         """
 
         if noise is not None:
             y += noise
 
-        xy = tf.concat(3, [y, x])
+        xy = tf.concat(axis=3, values=[y, x])
 
         with tf.variable_scope('discriminator'):
+            if reuse_scope:
+                tf.get_variable_scope().reuse_variables()
+
             conv0 = self.conv_layer(xy, 64, act=self.leaky_relu, norm=False, pad='SAME', stride=self.stride1, name='conv0')
 
             conv1 = self.conv_layer(conv0, 128, act=self.leaky_relu, pad='SAME', stride=self.stride1, name='conv1')
@@ -37,5 +41,4 @@ class Discriminator(net.Net):
             conv5 = self.conv_layer(conv4, 512, act=self.leaky_relu, pad='SAME', stride=self.stride2, name='conv5')
             conv6 = self.conv_layer(conv5, 512, act=None, norm=False, pad='SAME', stride=self.stride2, name='conv6')
 
-        tf.get_variable_scope().reuse_variables()
         return conv6

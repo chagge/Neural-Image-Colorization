@@ -6,27 +6,40 @@ import tensorflow as tf
 from trainer import Trainer
 
 # Model hyperparamaters
-BATCH_SIZE = 64
-EPOCHS = 10000
-LEARNING_RATE = 0.00005
-
-# Training related paramaters
-TRAINING_DIMS = {'height': 256, 'width': 256}
-PRINT_TRAINING_STATUS = True
-PRINT_EVERY_N = 100
+opts = {
+    'batch_size': 64,
+    'iterations': 1200000,
+    'learning_rate': 2e-6,
+    'model_path': None,  # path of previously trained model to continue training from
+    'print_every': 100,
+    'save_every': 10000,
+    'training_height': 256,
+    'training_width': 256,
+}
 
 
 def parse_args():
-    argparse.ArgumentParser(description='colorize images using conditional generative adversarial networks')
+    """
+    Creates command line arguments with the same name and default values as those in the global opts variable
+    Then updates opts using their respective argument values
+    """
 
+    # Parse command line arguments to assign to the global opt variable
+    parser = argparse.ArgumentParser(description='colorize images using conditional generative adversarial networks')
+    for opt_name, value in opts.items():
+        parser.add_argument("--%s" % opt_name, default=value)
+
+    # Update global opts variable using flag values
+    args = parser.parse_args()
+    for opt_name, _ in opts.items():
+        opts[opt_name] = getattr(args, opt_name)
+
+parse_args()
 with tf.Session() as sess:
-    parse_args()
-
     # Initialize networks
     gen = generator.Generator()
     disc = discriminator.Discriminator()
 
     # Train them
-    Helpers.check_for_examples()
-    t = Trainer(sess, gen, disc, BATCH_SIZE, TRAINING_DIMS, PRINT_TRAINING_STATUS, PRINT_EVERY_N)
-    t.train(EPOCHS, LEARNING_RATE)
+    t = Trainer(sess, gen, disc, opts)
+    t.train()
